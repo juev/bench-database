@@ -15,7 +15,7 @@ import (
 
 const (
 	MaxRows       = 10_000
-	MaxRowsUpdate = 1_000
+	MaxRowsUpdate = 3_000
 )
 
 var (
@@ -91,7 +91,7 @@ func BenchmarkTransactionBulkInsert(b *testing.B) {
 			query = query.Values(c+1, "name"+strconv.Itoa(c), "", "NEW", time.Now(), time.Now())
 		}
 		q, args, _ := query.ToSql()
-		conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+		err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
 			_, err = tx.Exec(ctx, q, args...)
 			return err
 		})
@@ -146,25 +146,20 @@ func BenchmarkUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		fillTable()
+		var sent *time.Time
+		t := time.Now()
+		sent = &t
+		var ids []uint64
 		for c := 0; c < MaxRowsUpdate; c++ {
-			err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
-				var sent *time.Time
-				t := time.Now()
-				sent = &t
-				if _, err = tx.Exec(ctx,
-					`update test 
-						SET 
-							status='SENT', 
-							created_at=$1, 
-							updated_at=$2`, sent, time.Now(),
-				); err != nil {
-					return err
-				}
-				return nil
-			})
-			if err != nil {
-				fatal("cannot insert to table: %v\n", err)
-			}
+			ids = append(ids, uint64(c))
+		}
+		qr, args, _ := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Update("test").
+			Set("status", "SENT").
+			Set("created_at", sent).
+			Set("updated_at", time.Now()).
+			Where(sq.Eq{"id": ids}).ToSql()
+		if _, err = conn.Exec(ctx, qr, args...); err != nil {
+			fatal("cannot insert to table: %v\n", err)
 		}
 	}
 }
