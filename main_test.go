@@ -142,6 +142,7 @@ func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 	}
 }
 
+// TODO: bulk update for 30_000_000 elements
 func BenchmarkUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cleanTable()
