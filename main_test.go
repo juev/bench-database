@@ -43,6 +43,25 @@ func BenchmarkInsert(b *testing.B) {
 	}
 }
 
+// TODO: fix function
+func BenchmarkBulkInsert(b *testing.B) {
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for c := 0; c < 10_000; c++ {
+			_, _ = db.Exec(`insert into test (id, name, meta, status, created_at, updated_at) VALUES
+						(c+1, "name"+strconv.Itoa(c),"", "NEW", time.NOW(), time.NOW());`)
+		}
+		_, err = db.Exec(`TRUNCATE TABLE test;`)
+		if err != nil {
+			fatal("cannot truncate table: %v", err)
+		}
+		_, err = db.Exec(`vacuum test;`)
+		if err != nil {
+			fatal("cannot vacuum table: %v", err)
+		}
+	}
+}
+
 func setup() {
 	// setup database
 	db, err = sql.Open("pgx", os.Getenv("PGX_TEST_DATABASE"))
