@@ -4,16 +4,17 @@
 goos: darwin
 goarch: arm64
 pkg: github.com/juev/bench-database
-BenchmarkInsert-8                      	       1	5479740375 ns/op
-BenchmarkTransactionInsert-8           	       1	12250542875 ns/op
-BenchmarkBulkInsert-8                  	      14	  77644524 ns/op
-BenchmarkTransactionBulkInsert-8       	      14	  79995140 ns/op
-BenchmarkCopyFromInsert-8              	      68	  19369895 ns/op
-BenchmarkTransactionCopyFromInsert-8   	      64	  18720895 ns/op
-BenchmarkUpdate-8                      	      43	  27245904 ns/op
-BenchmarkUpdateWithTemporaryTable-8    	      34	  33986902 ns/op
+BenchmarkInsert-8                                 	       1	5030175458 ns/op
+BenchmarkTransactionInsert-8                      	       1	11084082667 ns/op
+BenchmarkBulkInsert-8                             	      14	  76770756 ns/op
+BenchmarkTransactionBulkInsert-8                  	      15	  79860147 ns/op
+BenchmarkCopyFromInsert-8                         	      62	  17539187 ns/op
+BenchmarkTransactionCopyFromInsert-8              	      58	  18794177 ns/op
+BenchmarkUpdate-8                                 	       1	6247260000 ns/op
+BenchmarkUpdateWithTemporaryTable-8               	       1	3884489625 ns/op
+BenchmarkUpdateWithTemporaryTableWithoutIndex-8   	       1	3289993084 ns/op
 PASS
-ok  	github.com/juev/bench-database	28.028s
+ok  	github.com/juev/bench-database	35.535s
 ```
 
 ## update table

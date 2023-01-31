@@ -15,7 +15,7 @@ import (
 
 const (
 	MaxRows       = 10_000
-	MaxRowsUpdate = 3_000
+	MaxRowsUpdate = 3_000_000
 )
 
 var (
@@ -142,7 +142,6 @@ func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 	}
 }
 
-// TODO: bulk update for 30_000_000 elements
 func BenchmarkUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cleanTable()
@@ -150,17 +149,21 @@ func BenchmarkUpdate(b *testing.B) {
 		var sent *time.Time
 		t := time.Now()
 		sent = &t
-		var ids []uint64
-		for c := 0; c < MaxRowsUpdate; c++ {
-			ids = append(ids, uint64(c))
-		}
-		qr, args, _ := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Update("test").
-			Set("status", "SENT").
-			Set("created_at", sent).
-			Set("updated_at", time.Now()).
-			Where(sq.Eq{"id": ids}).ToSql()
-		if _, err = conn.Exec(ctx, qr, args...); err != nil {
-			fatal("cannot insert to table: %v\n", err)
+		count := 0
+		for cc := 0; cc < 1000; cc++ {
+			var ids []uint64
+			for c := 0; c < MaxRowsUpdate/1000; c++ {
+				ids = append(ids, uint64(count))
+				count++
+			}
+			qr, args, _ := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Update("test").
+				Set("status", "SENT").
+				Set("created_at", sent).
+				Set("updated_at", time.Now()).
+				Where(sq.Eq{"id": ids}).ToSql()
+			if _, err = conn.Exec(ctx, qr, args...); err != nil {
+				fatal("cannot insert to table: %v\n", err)
+			}
 		}
 	}
 }
@@ -200,6 +203,66 @@ func BenchmarkUpdateWithTemporaryTable(b *testing.B) {
 			if _, err = tx.Exec(ctx, `CREATE INDEX ON tmp(id)`); err != nil {
 				return err
 			}
+			// update main table
+			if _, err = tx.Exec(ctx,
+				`update test 
+					SET 
+						status=t.status, 
+						updated_at=t.updated_at, 
+						created_at=t.created_at 
+					FROM tmp t 
+					WHERE 
+						t.id=test.id
+					AND 
+						t.name=test.name`,
+			); err != nil {
+				return err
+			}
+			// drop temporary table
+			if _, err = tx.Exec(ctx, `drop table tmp;`); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			fatal("cannot insert to table: %v\n", err)
+		}
+	}
+}
+
+func BenchmarkUpdateWithTemporaryTableWithoutIndex(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cleanTable()
+		fillTable()
+		var rows [][]any
+		for c := 0; c < MaxRowsUpdate; c++ {
+			var sent *time.Time
+			t := time.Now()
+			sent = &t
+			rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "SENT", sent, time.Now()})
+		}
+		err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+			if _, err = tx.Exec(ctx,
+				`create temporary table tmp(
+						id bigint,
+						name text,
+						meta text,
+						status text,
+						created_at timestamp,
+						updated_at timestamp)`,
+			); err != nil {
+				return err
+			}
+
+			if _, err = tx.CopyFrom(
+				ctx,
+				pgx.Identifier{"tmp"},
+				[]string{"id", "name", "meta", "status", "created_at", "updated_at"},
+				pgx.CopyFromRows(rows),
+			); err != nil {
+				return err
+			}
+
 			// update main table
 			if _, err = tx.Exec(ctx,
 				`update test 
