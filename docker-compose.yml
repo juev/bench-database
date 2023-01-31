@@ -1,0 +1,12 @@
+version: '2'
+services:
+    db:
+        image: postgres:latest
+        environment:
+            - "POSTGRES_DB=sample_db"
+            - "POSTGRES_PASSWORD=sample_pass"
+            - "POSTGRES_USER=postgres"
+        ports:
+            - "5432:5432"
+        command: ["postgres", "-c", "log_statement=all"]
+
