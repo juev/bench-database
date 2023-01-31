@@ -13,7 +13,10 @@ import (
 	_ "github.com/joho/godotenv/autoload"
 )
 
-const MaxRows = 10_000
+const (
+	MaxRows       = 10_000
+	MaxRowsUpdate = 1_000
+)
 
 var (
 	conn *pgx.Conn
@@ -29,7 +32,6 @@ func TestMain(m *testing.M) {
 }
 
 func BenchmarkInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		for c := 0; c < MaxRows; c++ {
@@ -46,7 +48,6 @@ func BenchmarkInsert(b *testing.B) {
 }
 
 func BenchmarkTransactionInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		for c := 0; c < MaxRows; c++ {
@@ -66,7 +67,6 @@ func BenchmarkTransactionInsert(b *testing.B) {
 }
 
 func BenchmarkBulkInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
@@ -83,7 +83,6 @@ func BenchmarkBulkInsert(b *testing.B) {
 }
 
 func BenchmarkTransactionBulkInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
@@ -93,7 +92,7 @@ func BenchmarkTransactionBulkInsert(b *testing.B) {
 		}
 		q, args, _ := query.ToSql()
 		conn.BeginFunc(ctx, func(tx pgx.Tx) error {
-			_, err = conn.Exec(ctx, q, args...)
+			_, err = tx.Exec(ctx, q, args...)
 			return err
 		})
 		if err != nil {
@@ -103,7 +102,6 @@ func BenchmarkTransactionBulkInsert(b *testing.B) {
 }
 
 func BenchmarkCopyFromInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		var rows [][]any
@@ -123,7 +121,6 @@ func BenchmarkCopyFromInsert(b *testing.B) {
 }
 
 func BenchmarkTransactionCopyFromInsert(b *testing.B) {
-	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cleanTable()
 		var rows [][]any
@@ -131,13 +128,102 @@ func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 			rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "NEW", time.Now(), time.Now()})
 		}
 		err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
-			_, err = conn.CopyFrom(
+			_, err = tx.CopyFrom(
 				ctx,
 				pgx.Identifier{"test"},
 				[]string{"id", "name", "meta", "status", "created_at", "updated_at"},
 				pgx.CopyFromRows(rows),
 			)
 			return err
+		})
+		if err != nil {
+			fatal("cannot insert to table: %v\n", err)
+		}
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cleanTable()
+		fillTable()
+		for c := 0; c < MaxRowsUpdate; c++ {
+			err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+				var sent *time.Time
+				t := time.Now()
+				sent = &t
+				if _, err = tx.Exec(ctx,
+					`update test 
+						SET 
+							status='SENT', 
+							created_at=$1, 
+							updated_at=$2`, sent, time.Now(),
+				); err != nil {
+					return err
+				}
+				return nil
+			})
+			if err != nil {
+				fatal("cannot insert to table: %v\n", err)
+			}
+		}
+	}
+}
+func BenchmarkUpdateWithTemporaryTable(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cleanTable()
+		fillTable()
+		var rows [][]any
+		for c := 0; c < MaxRowsUpdate; c++ {
+			var sent *time.Time
+			t := time.Now()
+			sent = &t
+			rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "SENT", sent, time.Now()})
+		}
+		err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
+			if _, err = tx.Exec(ctx,
+				`create temporary table tmp(
+						id bigint,
+						name text,
+						meta text,
+						status text,
+						created_at timestamp,
+						updated_at timestamp)`,
+			); err != nil {
+				return err
+			}
+
+			if _, err = tx.CopyFrom(
+				ctx,
+				pgx.Identifier{"tmp"},
+				[]string{"id", "name", "meta", "status", "created_at", "updated_at"},
+				pgx.CopyFromRows(rows),
+			); err != nil {
+				return err
+			}
+
+			if _, err = tx.Exec(ctx, `CREATE INDEX ON tmp(id)`); err != nil {
+				return err
+			}
+			// update main table
+			if _, err = tx.Exec(ctx,
+				`update test 
+					SET 
+						status=t.status, 
+						updated_at=t.updated_at, 
+						created_at=t.created_at 
+					FROM tmp t 
+					WHERE 
+						t.id=test.id
+					AND 
+						t.name=test.name`,
+			); err != nil {
+				return err
+			}
+			// drop temporary table
+			if _, err = tx.Exec(ctx, `drop table tmp;`); err != nil {
+				return err
+			}
+			return nil
 		})
 		if err != nil {
 			fatal("cannot insert to table: %v\n", err)
@@ -193,5 +279,21 @@ func cleanTable() {
 	_, err = conn.Exec(ctx, `vacuum test;`)
 	if err != nil {
 		fatal("cannot vacuum table: %v\n", err)
+	}
+}
+
+func fillTable() {
+	var rows [][]any
+	for c := 0; c < MaxRows; c++ {
+		rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "NEW", time.Now(), time.Now()})
+	}
+	_, err = conn.CopyFrom(
+		ctx,
+		pgx.Identifier{"test"},
+		[]string{"id", "name", "meta", "status", "created_at", "updated_at"},
+		pgx.CopyFromRows(rows),
+	)
+	if err != nil {
+		fatal("cannot insert to table: %v\n", err)
 	}
 }
