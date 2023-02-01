@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	MaxRows       = 10_000
+	MaxRowsInsert = 10_000
 	MaxRowsUpdate = 3_000_000
 )
 
@@ -24,17 +24,11 @@ var (
 	err  error
 )
 
-func TestMain(m *testing.M) {
-	setup()
-	code := m.Run()
-	teardown()
-	os.Exit(code)
-}
-
 func BenchmarkInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
-		for c := 0; c < MaxRows; c++ {
+		setupTable()
+		b.ResetTimer()
+		for c := 0; c < MaxRowsInsert; c++ {
 			query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
 				Columns("id", "name", "meta", "status", "created_at", "updated_at")
 			query = query.Values(c+1, "name"+strconv.Itoa(c), "", "NEW", time.Now(), time.Now())
@@ -49,8 +43,8 @@ func BenchmarkInsert(b *testing.B) {
 
 func BenchmarkTransactionInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
-		for c := 0; c < MaxRows; c++ {
+		setupTable()
+		for c := 0; c < MaxRowsInsert; c++ {
 			query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
 				Columns("id", "name", "meta", "status", "created_at", "updated_at")
 			query = query.Values(c+1, "name"+strconv.Itoa(c), "", "NEW", time.Now(), time.Now())
@@ -68,10 +62,10 @@ func BenchmarkTransactionInsert(b *testing.B) {
 
 func BenchmarkBulkInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
+		setupTable()
 		query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
 			Columns("id", "name", "meta", "status", "created_at", "updated_at")
-		for c := 0; c < MaxRows; c++ {
+		for c := 0; c < MaxRowsInsert; c++ {
 			query = query.Values(c+1, "name"+strconv.Itoa(c), "", "NEW", time.Now(), time.Now())
 		}
 		q, args, _ := query.ToSql()
@@ -84,10 +78,10 @@ func BenchmarkBulkInsert(b *testing.B) {
 
 func BenchmarkTransactionBulkInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
+		setupTable()
 		query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("test").
 			Columns("id", "name", "meta", "status", "created_at", "updated_at")
-		for c := 0; c < MaxRows; c++ {
+		for c := 0; c < MaxRowsInsert; c++ {
 			query = query.Values(c+1, "name"+strconv.Itoa(c), "", "NEW", time.Now(), time.Now())
 		}
 		q, args, _ := query.ToSql()
@@ -103,9 +97,9 @@ func BenchmarkTransactionBulkInsert(b *testing.B) {
 
 func BenchmarkCopyFromInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
+		setupTable()
 		var rows [][]any
-		for c := 0; c < MaxRows; c++ {
+		for c := 0; c < MaxRowsInsert; c++ {
 			rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "NEW", time.Now(), time.Now()})
 		}
 		_, err = conn.CopyFrom(
@@ -122,9 +116,9 @@ func BenchmarkCopyFromInsert(b *testing.B) {
 
 func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
+		setupTable()
 		var rows [][]any
-		for c := 0; c < MaxRows; c++ {
+		for c := 0; c < MaxRowsInsert; c++ {
 			rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "NEW", time.Now(), time.Now()})
 		}
 		err = conn.BeginFunc(ctx, func(tx pgx.Tx) error {
@@ -144,8 +138,9 @@ func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 
 func BenchmarkUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
-		fillTable()
+		setupTable()
+		fillTableForUpdate()
+		b.ResetTimer()
 		var sent *time.Time
 		t := time.Now()
 		sent = &t
@@ -169,8 +164,9 @@ func BenchmarkUpdate(b *testing.B) {
 }
 func BenchmarkUpdateWithTemporaryTable(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
-		fillTable()
+		setupTable()
+		fillTableForUpdate()
+		b.ResetTimer()
 		var rows [][]any
 		for c := 0; c < MaxRowsUpdate; c++ {
 			var sent *time.Time
@@ -232,8 +228,9 @@ func BenchmarkUpdateWithTemporaryTable(b *testing.B) {
 
 func BenchmarkUpdateWithTemporaryTableWithoutIndex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		cleanTable()
-		fillTable()
+		setupTable()
+		fillTableForUpdate()
+		b.ResetTimer()
 		var rows [][]any
 		for c := 0; c < MaxRowsUpdate; c++ {
 			var sent *time.Time
@@ -290,7 +287,12 @@ func BenchmarkUpdateWithTemporaryTableWithoutIndex(b *testing.B) {
 	}
 }
 
-func setup() {
+func fatal(format string, a ...any) {
+	fmt.Printf(format, a...)
+	os.Exit(1)
+}
+
+func setupTable() {
 	// setup database
 	ctx = context.Background()
 	cfg, err := pgx.ParseConfig(os.Getenv("PGX_TEST_DATABASE"))
@@ -309,41 +311,18 @@ func setup() {
 		meta text,
 		status text,
 		created_at timestamp,
-		updated_at timestamp
+		updated_at timestamp,
+		PRIMARY KEY (id, name, created_at)
 	);
-	create index on test(id);`)
-	if err != nil {
-		fatal("cannot create table: %v\n", err)
-	}
-}
-
-func teardown() {
-	// remove table
-	_, err = conn.Exec(ctx, `drop table test;`)
+	create index on test(id, name, created_at);`)
 	if err != nil {
 		fatal("cannot drop table: %v\n", err)
 	}
 }
 
-func fatal(format string, a ...any) {
-	fmt.Printf(format, a...)
-	os.Exit(1)
-}
-
-func cleanTable() {
-	_, err = conn.Exec(ctx, `TRUNCATE TABLE test;`)
-	if err != nil {
-		fatal("cannot truncate table: %v\n", err)
-	}
-	_, err = conn.Exec(ctx, `vacuum test;`)
-	if err != nil {
-		fatal("cannot vacuum table: %v\n", err)
-	}
-}
-
-func fillTable() {
+func fillTableForUpdate() {
 	var rows [][]any
-	for c := 0; c < MaxRows; c++ {
+	for c := 0; c < MaxRowsUpdate; c++ {
 		rows = append(rows, []any{c + 1, "name" + strconv.Itoa(c), "", "NEW", time.Now(), time.Now()})
 	}
 	_, err = conn.CopyFrom(
