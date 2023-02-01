@@ -136,7 +136,7 @@ func BenchmarkTransactionCopyFromInsert(b *testing.B) {
 	}
 }
 
-func BenchmarkUpdate(b *testing.B) {
+func BenchmarkBulkUpdate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		setupTable()
 		fillTableForUpdate()
